@@ -8,7 +8,7 @@ import Portfolio from './pages/Portfolio.jsx'
 import Register from './pages/Register.jsx'
 import Stocks from './pages/Stocks.jsx'
 import Transactions from './pages/Transactions.jsx'
-import { clearAuth, getStoredUsername, hasAuthToken, saveAuth } from './services/api.js'
+import { api } from './services/api.js'
 
 const pageTitles = {
   Dashboard: 'Your learning dashboard',
@@ -19,38 +19,90 @@ const pageTitles = {
 }
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(hasAuthToken)
-  const [username, setUsername] = useState(getStoredUsername)
+  const [authenticated, setAuthenticated] = useState(false)
+  const [username, setUsername] = useState('')
   const [page, setPage] = useState('Dashboard')
   const [refreshId, setRefreshId] = useState(0)
   const [authMode, setAuthMode] = useState('landing')
+  const [sessionStatus, setSessionStatus] = useState('checking')
+  const [sessionError, setSessionError] = useState('')
+  const [sessionCheckId, setSessionCheckId] = useState(0)
+
+  useEffect(() => {
+    let active = true
+    api.currentUser()
+      .then((user) => {
+        if (!active) return
+        setUsername(user.username)
+        setAuthenticated(true)
+        setSessionStatus('ready')
+      })
+      .catch((error) => {
+        if (!active) return
+        if (error.status === 401) {
+          setAuthenticated(false)
+          setUsername('')
+          setSessionStatus('ready')
+          return
+        }
+        setSessionError(error.message)
+        setSessionStatus('error')
+      })
+    return () => { active = false }
+  }, [sessionCheckId])
 
   useEffect(() => {
     const handleExpiredSession = () => {
-      clearAuth()
       setAuthenticated(false)
       setUsername('')
       setAuthMode('login')
+      setSessionStatus('ready')
     }
     window.addEventListener('candlecraft:auth-expired', handleExpiredSession)
     return () => window.removeEventListener('candlecraft:auth-expired', handleExpiredSession)
   }, [])
 
   const handleAuthenticated = (authResponse) => {
-    saveAuth(authResponse)
     setAuthenticated(true)
     setUsername(authResponse.username)
+    setSessionStatus('ready')
+    setSessionError('')
     setPage('Dashboard')
   }
 
-  const handleLogout = () => {
-    clearAuth()
-    setAuthenticated(false)
-    setUsername('')
-    setAuthMode('login')
+  const handleLogout = async () => {
+    setSessionError('')
+    try {
+      await api.logout()
+      setAuthenticated(false)
+      setUsername('')
+      setAuthMode('login')
+    } catch (error) {
+      setSessionError(`Could not sign out: ${error.message}`)
+    }
   }
 
   const refreshAccount = () => setRefreshId((value) => value + 1)
+  const retrySessionCheck = () => {
+    setSessionError('')
+    setSessionStatus('checking')
+    setSessionCheckId((value) => value + 1)
+  }
+
+  if (sessionStatus === 'checking') {
+    return <main className="auth-main" aria-live="polite">Checking your session…</main>
+  }
+
+  if (sessionStatus === 'error') {
+    return (
+      <main className="auth-main">
+        <p className="form-alert error" role="alert">Could not verify your session: {sessionError}</p>
+        <button className="button button-primary" type="button" onClick={retrySessionCheck}>
+          Retry
+        </button>
+      </main>
+    )
+  }
 
   if (!authenticated) {
     if (authMode === 'landing') {
@@ -124,6 +176,7 @@ function App() {
         username={username}
       />
       <main className="main-content">
+        {sessionError && <p className="form-alert error" role="alert">{sessionError}</p>}
         <header className="page-heading">
           <div>
             <span className="eyebrow">CANDLE CRAFT / PAPER TRADING</span>

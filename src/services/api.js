@@ -1,50 +1,35 @@
 const localApiUrl = import.meta.env.DEV ? 'http://localhost:8080' : ''
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || localApiUrl).replace(/\/+$/, '')
-const TOKEN_KEY = 'candlecraft_access_token'
-const USERNAME_KEY = 'candlecraft_username'
+const API_BASE_URL = (import.meta.env.DEV ? import.meta.env.VITE_API_BASE_URL || localApiUrl : '').replace(/\/+$/, '')
 
-export function hasAuthToken() {
-  return Boolean(sessionStorage.getItem(TOKEN_KEY))
-}
-
-export function getStoredUsername() {
-  return sessionStorage.getItem(USERNAME_KEY) || ''
-}
-
-export function saveAuth(authResponse) {
-  sessionStorage.setItem(TOKEN_KEY, authResponse.accessToken)
-  sessionStorage.setItem(USERNAME_KEY, authResponse.username)
-}
-
-export function clearAuth() {
-  sessionStorage.removeItem(TOKEN_KEY)
-  sessionStorage.removeItem(USERNAME_KEY)
+class ApiError extends Error {
+  constructor(message, status) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
 }
 
 async function request(path, options = {}) {
-  if (!API_BASE_URL) {
-    throw new Error('The backend URL is not configured. Set VITE_API_BASE_URL for this deployment.')
-  }
   const headers = new Headers(options.headers || {})
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
 
-  const token = sessionStorage.getItem(TOKEN_KEY)
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
-
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers })
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',
+  })
   const contentType = response.headers.get('content-type') || ''
-  const payload = contentType.includes('application/json') ? await response.json() : null
+  const payload = contentType.includes('application/json') && response.status !== 204
+    ? await response.json()
+    : null
 
-  if (response.status === 401 && token) {
-    clearAuth()
+  if (response.status === 401 && !path.startsWith('/api/auth/')) {
     window.dispatchEvent(new Event('candlecraft:auth-expired'))
   }
   if (!response.ok) {
-    throw new Error(payload?.message || `Request failed (${response.status}). Please try again.`)
+    throw new ApiError(payload?.message || `Request failed (${response.status}). Please try again.`, response.status)
   }
   return payload
 }
@@ -58,6 +43,8 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(form),
   }),
+  currentUser: () => request('/api/auth/me'),
+  logout: () => request('/api/auth/logout', { method: 'POST' }),
   stocks: () => request('/api/stocks'),
   stock: (symbol) => request(`/api/stocks/${encodeURIComponent(symbol)}`),
   portfolio: () => request('/api/portfolio'),
